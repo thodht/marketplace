@@ -5,34 +5,48 @@ import React, {
   useContext,
   useState,
   useEffect,
+  useRef,
   type ReactNode,
+  useCallback
 } from "react";
 import { PI_NETWORK_CONFIG, BACKEND_URLS } from "@/lib/system-config";
 import { api, setApiAuthToken } from "@/lib/api";
 
-export type LoginDTO = {
-  id: string;
-  username: string;
-  credits_balance: number;
-  terms_accepted: boolean;
-};
-
-interface PiAuthResult {
+type AuthResult = {
   accessToken: string;
   user: {
     uid: string;
     username: string;
   };
+};
+
+export type UserDTO = {
+  uid: string, // An app-specific user identifier
+  credentials: {
+    scopes: string[], // a list of granted scopes
+    valid_until: {
+      timestamp: number,
+      iso8601: string
+    }
+  },
+  username?: string, // The user's Pi username. Requires the `username` scope.
 }
 
-declare global {
-  interface Window {
-    Pi: {
-      init: (config: { version: string; sandbox?: boolean }) => Promise<void>;
-      authenticate: (scopes: string[], paymentCallback?: (payment: any) => Promise<void>) => Promise<PiAuthResult>;
-    };
-  }
+interface PiAuthContextType {
+  isAuthenticated: boolean;
+  authMessage: string;
+  hasError: boolean;
+  piAccessToken: string | null;
+  userData: UserDTO | null;
+  error: string | null;
+  reinitialize: () => Promise<void>;
 }
+
+export type PaymentData = {
+  amount: number,
+  memo: string,
+  metadata: Object,
+};
 
 const COMMUNICATION_REQUEST_TYPE = '@pi:app:sdk:communication_information_request';
 const DEFAULT_ERROR_MESSAGE = 'Failed to authenticate or login. Please refresh and try again.';
@@ -67,18 +81,6 @@ function parseJsonSafely(value: any): any {
   }
   return typeof value === 'object' && value !== null ? value : null;
 }
-
-interface PiAuthContextType {
-  isAuthenticated: boolean;
-  authMessage: string;
-  hasError: boolean;
-  piAccessToken: string | null;
-  userData: LoginDTO | null;
-  error: string | null;
-  reinitialize: () => Promise<void>;
-}
-
-const PiAuthContext = createContext<PiAuthContextType | undefined>(undefined);
 
 const loadPiSDK = (): Promise<void> => {
   return new Promise((resolve, reject) => {
@@ -172,145 +174,157 @@ function requestParentCredentials(): Promise<{ accessToken: string; appId: strin
   });
 }
 
+const PiAuthContext = createContext<PiAuthContextType | undefined>(undefined);
+
 export function PiAuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const isAuthenticating = useRef(false);
   const [authMessage, setAuthMessage] = useState("Initializing Pi Network...");
   const [hasError, setHasError] = useState(false);
   const [piAccessToken, setPiAccessToken] = useState<string | null>(null);
-  const [userData, setUserData] = useState<LoginDTO | null>(null);
+  const [userData, setUserData] = useState<UserDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const authenticateAndLogin = async (accessToken: string, appId: string | null): Promise<void> => {
-    setAuthMessage("Logging in...");
-
-    let endpoint: string;
-    let payload: { pi_auth_token: string; app_id?: string };
-    if (appId) {
-      // Use /login/preview when appId is provided (App Studio iframe flow)
-      endpoint = BACKEND_URLS.LOGIN_PREVIEW;
-      payload = { pi_auth_token: accessToken, app_id: appId };
-    } else {
-      // Use /login when appId is null (normal Pi app context)
-      endpoint = BACKEND_URLS.LOGIN;
-      payload = { pi_auth_token: accessToken };
+  const authenticateAndLogin = async (accessToken: string): Promise<void> => {
+    // FIX: Guard against double-firing in React Strict Mode / Re-renders
+    if (isAuthenticating.current) {
+      console.log("Authentication handshake already in progress. Skipping duplicate invoke.");
+      return;
     }
-    const loginRes = await api.post<LoginDTO>(endpoint, payload);
 
     if (accessToken) {
       setPiAccessToken(accessToken);
       setApiAuthToken(accessToken);
     }
 
-    setUserData(loginRes.data);
+    // Prepare headers
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${accessToken}`
+    };
+    let init: RequestInit = { headers };
+
+    try {
+      // FIX: Pass the raw Promise (remove 'await' from api.get) so Promise.race works properly
+      const loginPromise = api.get<UserDTO>(BACKEND_URLS.LOGIN, init);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Backend login request timed out")), 10000));
+      const loginRes = await Promise.race([loginPromise, timeoutPromise]);
+      setUserData(loginRes.data);
+    } catch (backendError) {
+      //console.error("Backend login verification failed:", backendError);
+      throw backendError; // Re-throw so parent block can handle/alert it cleanly
+    } finally {
+      // ALWAYS RELEASE THE LOCK: Clean up execution reference so login can be attempted again if failed
+      isAuthenticating.current = false;
+    }
   };
 
-  const getErrorMessage = (error: unknown): string => {
-    if (!(error instanceof Error))
-      return "An unexpected error occurred. Please try again.";
-
-    const errorMessage = error.message;
-
-    if (errorMessage.includes("SDK failed to load"))
-      return "Failed to load Pi Network SDK. Please check your internet connection.";
-
-    if (errorMessage.includes("authenticate"))
-      return "Pi Network authentication failed. Please try again.";
-
-    if (errorMessage.includes("login"))
-      return "Failed to connect to backend server. Please try again later.";
-
-    return `Authentication error: ${errorMessage}`;
-  };
+  const handleIncompletePayment = useCallback((payment: any) => {
+    console.log("Incomplete payment found:", payment);
+  }, []);
 
   const authenticateViaPiSdk = async (): Promise<void> => {
-    setAuthMessage("Initializing Pi Network...");
-    await window.Pi.init({
-      version: "2.0",
-      sandbox: PI_NETWORK_CONFIG.SANDBOX,
-    });
+    // FIX: Guard against double-firing in React Strict Mode / Re-renders
+    if (isAuthenticating.current) {
+      console.log("Authentication handshake already in progress. Skipping duplicate invoke.");
+      return;
+    }
 
-    setAuthMessage("Authenticating with Pi Network...");
-    let piAuthResult;
+    if (typeof window.Pi === "undefined") {
+      isAuthenticating.current = false;
+      throw new Error("SDK failed to load: Pi object not available");
+    }
+
     try {
-      piAuthResult = await window.Pi.authenticate(["username"]);
-      if (!piAuthResult.accessToken) {
+      window.Pi.init({
+        version: '2.0',
+        sandbox: PI_NETWORK_CONFIG.SANDBOX,
+      });
+
+      // Safe structural operational buffer for mobile layouts
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      setAuthMessage("Authenticating with Pi Network...");
+
+      let piAuthResult = await window.Pi.authenticate(["username"], handleIncompletePayment);
+
+      if (!piAuthResult?.accessToken) {
+        isAuthenticating.current = false;
         throw new Error(DEFAULT_ERROR_MESSAGE);
       }
-    } catch (authError) {
-      // Catch authentication errors (like user cancellation in Sandbox)
-      if (PI_NETWORK_CONFIG.SANDBOX) {
-        console.warn("Sandbox Auth failed or canceled. Applying bypass.");
-        piAuthResult = {
-          accessToken: "mock_sandbox_token",
-          user: { uid: "sandbox_uid_123", username: "SandboxPioneer" }
-        };
-      } else {
-        throw authError;
-      }
-    }
 
-    try {
-      // Try to communicate with your backend server
-      await authenticateAndLogin(piAuthResult.accessToken, null);
-    } catch (loginError) {
-      // Catch backend connection issues
-      if (PI_NETWORK_CONFIG.SANDBOX) {
-        console.warn("Backend server connection failed. Feeding mock session for Sandbox development.");
-        
-        // Directly mock the state values that would otherwise come from your backend
-        setPiAccessToken(piAuthResult.accessToken);
-        setUserData({
-          id: piAuthResult.user.uid,
-          username: piAuthResult.user.username,
-          credits_balance: 1000, // Give your test user 1000 Pi to browse the marketplace!
-          terms_accepted: true
-        });
-      } else {
-        throw loginError;
-      }
+      await authenticateAndLogin(piAuthResult.accessToken);
+      setAuthMessage("Authenticated successfully!");
+
+    } catch (error: any) {
+      const msg = typeof error === 'string' ? error : (error?.message || "Unknown structure");
+      alert("Pi Auth True Error: " + msg);
+    } finally {
+      // FIX: Always release the execution lock when done or failed
+      isAuthenticating.current = false;
     }
+    isAuthenticating.current = false;
   };
 
   const initializePiAndAuthenticate = async () => {
+    // 1. CRITICAL GUARD: Stop execution if an authentication thread is already processing
+    if (isAuthenticating.current) {
+      console.log("Initialization already handling a concurrent pipeline execution. Blocking loop.");
+      return;
+    }
+
+    // 2. Batch baseline states
     setError(null);
     setHasError(false);
-    try {
-      // Probe for parent credentials (App Studio iframe environment)
-      const parentCredentials = await requestParentCredentials();
 
-      // If parent (App Studio) provides credentials, use iframe flow
-      if (parentCredentials) {
-        await authenticateAndLogin(parentCredentials.accessToken, parentCredentials.appId);
-      } else {
-        // Fallback to Pi SDK authentication
-        setAuthMessage("Loading Pi Network SDK...");
+    // Wrap the initialization inside a delayed tick to allow Next.js DOM structures to settle.
+    // By keeping the tracking reference set to true immediately above, subsequent re-renders during this 
+    // 1000ms window will safely bounce off the guard block.
+    setTimeout(async () => {
+      try {
+        //setAuthMessage("Probing environment configurations...");
+        //await new Promise((resolve) => setTimeout(resolve, 1000));
+        const parentCredentials = await requestParentCredentials();
 
-        // Only load if not already loaded
-        if (typeof window.Pi === "undefined") {
-          await loadPiSDK();
+        if (parentCredentials) {
+          // authenticateAndLogin is internally guarded now, but we await its pipeline resolution here
+          await authenticateAndLogin(parentCredentials.accessToken);
+        } else {
+          if (typeof window.Pi === "undefined") {
+            //setAuthMessage("Loading Pi Network JavaScript asset from CDN...");
+            await loadPiSDK();
+          }
+
+          if (typeof window.Pi === "undefined") {
+            throw new Error("SDK failed to load: Pi object not available after script load");
+          }
+
+          // Directly invoke the core handshake sequence (remove duplicate checks if already managed inside authenticateViaPiSdk)
+          await authenticateViaPiSdk();
         }
 
-        if (typeof window.Pi === "undefined") {
-          throw new Error("SDK failed to load: Pi object not available after script load");
-        }
+        // Force a brief pause so users can see success logs on screen before the layout structure switches
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
-        await authenticateViaPiSdk();
+        ;
+        setIsAuthenticated(true);
+        setHasError(false);
+      } catch (err: any) {
+        console.error("❌ Pi Network initialization failed:", err);
+        setHasError(true);
+        const errorMessage = err?.message || "An unexpected configuration error occurred.";
+        setAuthMessage(errorMessage);
+        setError(errorMessage);
+      } finally {
+        // 3. ALWAYS RELEASE THE LOCK: Clean up execution reference so login can be attempted again if failed
+        isAuthenticating.current = false;
       }
-
-      setIsAuthenticated(true);
-      setHasError(false);
-    } catch (err) {
-      console.error("❌ Pi Network initialization failed:", err);
-      setHasError(true);
-      const errorMessage = getErrorMessage(err);
-      setAuthMessage(errorMessage);
-      setError(errorMessage);
-    }
+    }, 1000);
+    isAuthenticating.current = false;
   };
 
-  useEffect(() => {
-    initializePiAndAuthenticate();
-  }, []);
+  useEffect(() => { initializePiAndAuthenticate(); }, []);
 
   const value: PiAuthContextType = {
     isAuthenticated,
