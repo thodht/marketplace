@@ -26,55 +26,53 @@ type FetchResponse<T> = {
   headers: Headers;
 };
 
-/*export interface ApiError<T = unknown> extends Error {
+export interface ApiError<T = unknown> extends Error {
   status: number;
   data: T;
-}*/
-
-export class ApiError extends Error {
-  status: number;
-  data: any; // Using any here prevents alignment issues with successful response types
-
-  constructor(message: string, status: number, data: any) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.data = data;
-
-    if (Error.captureStackTrace) {
-      Error.captureStackTrace(this, ApiError);
-    }
-  }
 }
 
 let authToken: string | null = null;
 
-const request = async <T = any>(url: string, init: RequestInit = {}): Promise<FetchResponse<T>> => {
+const defaultHeaders: Record<string, string> = {
+  "Content-Type": "application/json",
+};
+
+const request = async <T = any>(
+  url: string,
+  init: RequestInit = {}
+): Promise<FetchResponse<T>> => {
   const headers: Record<string, string> = {
-    //    ...defaultHeaders,
+    ...defaultHeaders,
+    ...(authToken ? { Authorization: authToken } : {}),
     ...(init.headers as Record<string, string> | undefined),
   };
+
   const response = await fetch(url, { ...init, headers });
 
-  const contentType = response.headers.get("Content-Type") || "";
+  const contentType = response.headers.get("content-type") || "";
   const isJson = contentType.includes("application/json");
-  //const data = response.status === 204 ? null : isJson ? await response.json() : await response.text();
-  const data = isJson ? await response.json() : await response.text();
+  const data =
+    response.status === 204
+      ? null
+      : isJson
+        ? await response.json()
+        : await response.text();
 
-  // FIX: Change !response.status to !response.ok
   if (!response.ok) {
-    throw new ApiError(
-      response.statusText || `Request failed with status ${response.status}`,
-      response.status,
-      data
-    );
+    const error = new Error(
+      response.statusText || "Request failed"
+    ) as ApiError<T>;
+    error.status = response.status;
+    error.data = data as T;
+    throw error;
   }
 
   return {
     data: data as T,
     status: response.status,
-    headers: response.headers
-  } as unknown as FetchResponse<T>;
+    statusText: response.statusText,
+    headers: response.headers,
+  };
 };
 
 export const api = {

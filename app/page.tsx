@@ -1,225 +1,29 @@
 "use client"
 
 import { useEffect, useState } from "react";
-import { PI_NETWORK_CONFIG, BACKEND_URLS } from "@/lib/system-config";
-import { Search, MapPin, Bell, User, Home, Grid3X3, MessageCircle, Heart, Plus, Check, FocusIcon, XIcon } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import Image from "next/image"
-import { usePiAuth, UserDTO } from "@/contexts/pi-auth-context"
-import { PaymentData } from "@/contexts/pi-auth-context";
+import { Search, MapPin, Bell, User, Heart, Plus, Check, FocusIcon, XIcon, Package } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import Image from "next/image";
+import { usePiAuth } from "@/contexts/pi-auth-context";
+import { usePreferences } from '@/contexts/preferences-context';
+import Onboarding from "@/components/onboarding";
+import { useTranslation } from "@/hooks/use-translation";
+import type { PiUser } from "@swetate/auth";
 
-// DATABASE SCHEMAS
-// 1. CATEGORIES (Manually Seeded Lookup Collection)
-export interface Category {
-  id: string;               // e.g., "HOME"
-  name: string;             // e.g., "Home & Living"
-  icon: string;             // e.g., "home-icon-url" or Lucide icon string
-  backgroundColor: string;  // e.g., "bg-blue-100"
-}
-
-// strict status types - simplified by dropping 'soft-deleted'
-type ListingStatus = 'open' | 'pending' | 'sold';
-
-// 2. USERS
-export interface User {
-  id: string;               // Pi User UID
-  username: string;         // Unique Pi username (e.g., "alex99")
-  displayName?: string;     // Friendly name (e.g., "Alex Smith") - Optional fallback
-  rating: number;
-  userImage: string;
-  createdAt: any;           // Firestore Server Timestamp
-}
-
-// 3. FAVORITES (Independent Collection)
-export interface Favorite {
-  id: string;               // Best practice ID: `${username}_${listingId}`
-  username: string;         // The Pi user who liked it
-  listingId: string;        // The targeted listing
-  createdAt: any;
-}
-
-// 4. LISTINGS
-export interface Listing {
-  id: string;
-  categoryId: string;
-  title: string;
-  description: string;
-  status: ListingStatus;    // 'open', 'pending', or 'sold'
-  displayed: boolean;       // Control feed visibility (Seller deletes set this to false)
-  images: string[];
-
-  // Seller Context (Denormalized names for instant display)
-  sellerId: string;
-  sellerUsername: string;
-  sellerDisplayName?: string;
-  sellerRating: number;
-
-  // Buyer & Lockout Context
-  buyerId: string | null;
-  buyerUsername: string | null;
-  buyerDisplayName?: string | null;
-  pendingUser: string | null; // Exclusive Checkout Lock (Blocks other buyers when status is 'pending')
-
-  // Pricing
-  origPrice: number;
-  adjustedPrice: number;
-  finalizedPrice: number;
-
-  createdAt: any;
-}
-
-// 5. OFFERS (Subcollection inside specific Listing document or separate indexed collection)
-export interface Offer {
-  id: string;
-  listingId: string;
-  offeredPrice: number;
-  offerMessage: string;
-  finalized: boolean;       // Set to true when seller accepts this specific offer
-
-  // Buyer Context
-  buyerId: string;
-  buyerUsername: string;
-  buyerDisplayName?: string;
-  createdAt: any;
-}
-
-// 6. REVIEWS
-export interface Review {
-  id: string;
-  listingId: string;
-  listingTitle: string;     // Denormalized so the profile grid shows what item was reviewed
-  rating: number;           // Integer 1 to 5
-  reviewText: string;
-
-  // Target of review
-  sellerId: string;         // Crucial field allowing instant queries on a Seller's profile page
-
-  // Author of review
-  reviewerId: string;       // Buyer's Pi UID
-  reviewerUsername: string;
-  reviewerDisplayName?: string;
-  createdAt: any;
-}
-
-// 7. CHAT ROOMS
-export interface ChatRoom {
-  id: string;               // Composite ID: `${listingId}_${buyerId}` to prevent redundant rooms
-  listingId: string;
-  listingTitle: string;     // Denormalized for inbox preview
-  listingImage: string;     // Denormalized thumbnail for inbox preview
-
-  // Participants
-  buyerId: string;
-  buyerUsername: string;
-  buyerDisplayName?: string;
-
-  sellerId: string;
-  sellerUsername: string;
-  sellerDisplayName?: string;
-
-  // Inbox Preview Metadata
-  lastMessage: string;      // Snippet showing the last text sent
-  updatedAt: any;           // Crucial for sorting inbox by newest conversation
-}
-
-// 8. CHAT MESSAGES (Subcollection inside: chatRooms/{roomId}/messages/)
-export interface ChatMessage {
-  id: string;               // Auto-generated by Firestore
-  message: string;
-  senderId: string;         // Sender's Pi UID
-  senderUsername: string;
-  createdAt: any;           // Order chronological sequence via (.orderBy('createdAt', 'asc'))
-}
 
 export default function PiMarketApp() {
-  const [activeTab, setActiveTab] = useState("home")
+  const authContext = usePiAuth();
+  const prefContext = usePreferences();
+  const { t, currentLang, changeLanguage } = useTranslation();
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [piUser, setPiUser] = useState<PiUser | null>(null);
 
-  const { isAuthenticated, authMessage, hasError, piAccessToken, userData, error } = usePiAuth();
-
-
-  // AUTHENTICATION
-  // Store authenticated user information from the SDK
-  //const [piUser, setPiUser] = useState<{ uid: string; username: string} | null>(null);
-  const [piUser, setPiUser] = useState<UserDTO | null>(null);
-  const [authLoading, setAuthLoading] = useState(false);
-
-  useEffect(() => { setPiUser(userData); }, []);
-
-  // Initialize the SDK configuration once on component layout mount
-  /*useEffect(() => {
-    if (typeof window.Pi !== "undefined" && window.Pi) {
-      try {
-        window.Pi.init({
-          version: '2.0',
-          sandbox: PI_NETWORK_CONFIG.SANDBOX
-        });
-        console.log("Pi SDK Initialized Successfully!");
-      } catch (error) {
-        console.error("Failed to initialize Pi SDK:", error);
-      }
-    }
-  }, []);*/
-
-  const handlePiLogin = async () => {
-    if (typeof window === "undefined" || !window.Pi) {
-      alert("Pi SDK not available. Please open this app inside the Pi Browser.");
-      return;
-    }
-
-    setAuthLoading(true);
-    try {
-      // Request permission access scopes ('username' is mandatory)
-      const authResult = await window.Pi.authenticate(
-        ["username"],
-        (incompletePayment: PaymentData) => {
-          console.log("Incomplete payment trace found:", incompletePayment);
-          // We will implement payment checking routines here in the next section!
-        }
-      );
-
-      console.log("SDK Authenticated successfully, verifying with backend...", authResult.user.uid);
-
-      // Forward the temporary accessToken to your App Studio backend framework
-      const response = await fetch(BACKEND_URLS.LOGIN, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${authResult.accessToken}`
-        }
-      });
-
-      if (!response.ok) {
-        throw new Error("Backend authentication token handshake validation failure");
-      }
-
-      const data = await response.json();
-      console.log("Backend profile sync complete:", data);
-
-      // Update your state data variables with the live account information
-      setPiUser(authResult.user);
-
-      // Dynamically patch your profile listing card placeholder states if desired:
-      setUserStats(prev => ({
-        ...prev,
-        fullName: authResult.user.username,
-      }));
-
-    } catch (error) {
-      console.error("Pi Authentication failed:", error);
-      alert("Could not connect to Pi Network Account.");
-    } finally {
-      setAuthLoading(false);
-    }
-  };
-
-  // NOTIFICATION
   // State to toggle the notification listing dropdown/modal
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
-
   // Mock list of user notifications
   const [notifications, setNotifications] = useState([
     { id: 1, text: "Your offer for iPhone 14 Pro was accepted!", seen: false, time: "2m ago" },
@@ -227,19 +31,10 @@ export default function PiMarketApp() {
     { id: 3, text: "Welcome to Pi Marketplace! Verify your profile.", seen: true, time: "1d ago" },
   ]);
 
-  // Derived state: automatically checks if there is any notification where seen is false
-  const hasUnseen = notifications.some(n => !n.seen);
-
-  // Helper function to mark all as read when opening the panel (or clicking individual entries)
-  const handleMarkAllAsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, seen: true })));
-  };
-
-  // PROFILE
   // State to toggle the profile dropdown menu
   const [isProfileOpen, setIsProfileOpen] = useState(false);
 
-  // Mock user stats counters
+  // Mock user stats 
   const [userStats, setUserStats] = useState({
     fullName: "John Doe",
     rating: 4.8,
@@ -249,12 +44,37 @@ export default function PiMarketApp() {
     reviewsMadeCount: 8
   });
 
-  // LOCATION
   // State for location
-  const [location, setLocation] = useState<string>("Not set yet");
+  const [location, setLocation] = useState<string>(t("location.none"));
   const [isEditingLocation, setIsEditingLocation] = useState<boolean>(false);
   const [locationInput, setLocationInput] = useState<string>("");
+  // Location suggestion state
+  const [suggestions, setSuggestions] = useState<any[]>([]);
 
+  // 2. SYNCHRONIZE VALUES INSIDE EFFECT
+  useEffect(() => {
+    // Simulating Pi Network Auth Check
+    const checkAuth = async () => {
+      if (authContext && authContext.user) {
+        setPiUser(authContext.user);
+      }
+      setIsAuthenticated(true);
+    };
+    // Checking Persistent Storage configuration flags
+
+    checkAuth();
+  }, [authContext?.user]);
+
+  // NOTIFICATION
+  // Derived state: automatically checks if there is any notification where seen is false
+  const hasUnseen = notifications.some(n => !n.seen);
+
+  // Helper function to mark all as read when opening the panel (or clicking individual entries)
+  const handleMarkAllAsRead = () => {
+    setNotifications(prev => prev.map(n => ({ ...n, seen: true })));
+  };
+
+  // LOCATION
   // Location auto-detect helper
   const handleAutoDetectLocation = () => {
     if (!navigator.geolocation) {
@@ -288,9 +108,6 @@ export default function PiMarketApp() {
       }
     );
   };
-
-  // Location suggestion state
-  const [suggestions, setSuggestions] = useState<any[]>([]);
 
   const handleLocationInputChange = async (value: string) => {
     setLocationInput(value);
@@ -362,13 +179,26 @@ export default function PiMarketApp() {
       isNew: false,
     },
   ]
-
-  if (!piUser) {
+  // Show loading spinner while hooks process persistent storage records
+  if (prefContext.isLoading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-6">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-amber-500 mb-4"></div>
-        <p className="text-center font-mono text-sm text-slate-400">{authMessage}</p>
+      <div className="min-h-screen flex items-center justify-center bg-white">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600" />
       </div>
+    );
+  }
+
+  // Handle Unauthenticated State
+  if (!isAuthenticated) {
+    return <div>{t("auth.login")}</div>;
+  }
+
+  // Force onboarding for new profile
+  if (prefContext.needsOnboarding === true) {
+    return (
+      <Onboarding
+        onComplete={() => prefContext.completeOnboarding()}
+      />
     );
   }
 
@@ -383,7 +213,7 @@ export default function PiMarketApp() {
               <div className="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center">
                 <span className="text-white font-bold text-sm">π</span>
               </div>
-              <h1 className="text-xl font-bold text-gray-900">Marketplace</h1>
+              <h1 className="text-xl font-bold text-gray-900">{t("app.name")}</h1>
             </div>
 
             {/* Right Section: Notification Bell & User Dropdown */}
@@ -418,21 +248,17 @@ export default function PiMarketApp() {
                 {isNotificationOpen && (
                   <div className="absolute right-0 mt-2 w-72 bg-white border border-gray-100 rounded-xl shadow-xl z-50 py-2 max-h-80 overflow-y-auto pointer-events-auto">
                     <div className="px-3 pb-2 pt-1 border-b border-gray-100 flex justify-between items-center">
-                      <span className="text-xs font-bold text-gray-900">Notifications</span>
+                      <span className="text-xs font-bold text-gray-900">{t("notification.heading")}</span>
                       {hasUnseen && (
                         <button
                           onClick={handleMarkAllAsRead}
-                          className="text-[10px] text-purple-600 font-semibold hover:underline"
-                        >
-                          Mark all read
+                          className="text-[10px] text-purple-600 font-semibold hover:underline">{t("notification.mark.read")}
                         </button>
                       )}
                     </div>
 
                     {notifications.length === 0 ? (
-                      <div className="px-4 py-6 text-center text-xs text-gray-400">
-                        No notifications yet
-                      </div>
+                      <div className="px-4 py-6 text-center text-xs text-gray-400">{t("notification.none")}</div>
                     ) : (
                       <div className="divide-y divide-gray-50">
                         {notifications.map((item) => (
@@ -473,8 +299,10 @@ export default function PiMarketApp() {
                   className="focus:outline-none block rounded-full ring-2 ring-transparent hover:ring-purple-200 transition w-8 h-8"
                 >
                   <Avatar className="h-8 w-8">
-                    <AvatarImage src="/placeholder-user.jpg" />
-                    <AvatarFallback>U</AvatarFallback>
+                    {/* Remove AvatarImage if it's pointing to a broken local file */}
+                    <AvatarFallback className="bg-slate-100 flex items-center justify-center">
+                      <User className="h-4 w-4 text-slate-500" />
+                    </AvatarFallback>
                   </Avatar>
                 </button>
 
@@ -489,52 +317,33 @@ export default function PiMarketApp() {
                 {/* Profile Dropdown Layer */}
                 {isProfileOpen && (
                   <div className="absolute right-0 mt-2 w-64 bg-white border border-gray-100 rounded-xl shadow-xl z-50 py-2 pointer-events-auto">
+                    <>
+                      <div className="px-4 py-2.5 border-b border-gray-50 flex justify-between items-center bg-gray-50/50 rounded-t-xl">
+                        <span className="text-xs font-bold text-gray-800 truncate pr-2">
+                          Hi, @{piUser?.username ?? "Pioneer"}
+                        </span>
+                        <div className="flex items-center text-[11px] font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded flex-shrink-0">
+                          <span className="ml-0.5">{userStats.rating}</span>
+                          <span>★</span>
+                          <span className="text-gray-400 font-normal ml-0.5">({userStats.reviewCount})</span>
+                        </div>
+                      </div>
 
-                    {!isAuthenticated ? (
-                      // Unauthenticated Login Portal Action view
-                      <div className="p-3 text-center">
-                        <p className="text-xs text-gray-500 mb-2">Sign in to post your listing.</p>
-                        <button
-                          onClick={() => {
-                            handlePiLogin();
-                            setIsProfileOpen(false);
-                          }}
-                          disabled={authLoading}
-                          className="w-full text-xs font-bold bg-gradient-to-r from-purple-600 to-pink-500 text-white rounded-lg py-2 shadow-sm hover:opacity-90 active:scale-[0.98] transition disabled:opacity-50"
-                        >
-                          {authLoading ? "Connecting..." : "Connect Pi Account"}
+                      <div className="p-1 space-y-0.5">
+                        <button onClick={() => setIsProfileOpen(false)} className="w-full flex items-center justify-between px-3 py-2 text-xs text-gray-700 hover:bg-purple-50 rounded-lg transition text-left">
+                          <span className="font-medium">My Listings</span>
+                          <span className="bg-gray-100 text-gray-600 font-semibold px-2 py-0.5 rounded-full text-[10px]">{userStats.listingsCount}</span>
+                        </button>
+                        <button onClick={() => setIsProfileOpen(false)} className="w-full flex items-center justify-between px-3 py-2 text-xs text-gray-700 hover:bg-purple-50 rounded-lg transition text-left">
+                          <span className="font-medium">Favorite Listings</span>
+                          <span className="bg-purple-50 text-purple-600 font-semibold px-2 py-0.5 rounded-full text-[10px]">{userStats.favoritesCount}</span>
+                        </button>
+                        <button onClick={() => setIsProfileOpen(false)} className="w-full flex items-center justify-between px-3 py-2 text-xs text-gray-700 hover:bg-purple-50 rounded-lg transition text-left">
+                          <span className="font-medium">My Reviews</span>
+                          <span className="bg-gray-100 text-gray-600 font-semibold px-2 py-0.5 rounded-full text-[10px]">{userStats.reviewsMadeCount}</span>
                         </button>
                       </div>
-                    ) : (
-                      // Authenticated Full Account view details block
-                      <>
-                        <div className="px-4 py-2.5 border-b border-gray-50 flex justify-between items-center bg-gray-50/50 rounded-t-xl">
-                          <span className="text-xs font-bold text-gray-800 truncate pr-2">
-                            Hi, @{piUser?.username ?? "Pioneer"}
-                          </span>
-                          <div className="flex items-center text-[11px] font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded flex-shrink-0">
-                            <span className="ml-0.5">{userStats.rating}</span>
-                            <span>★</span>
-                            <span className="text-gray-400 font-normal ml-0.5">({userStats.reviewCount})</span>
-                          </div>
-                        </div>
-
-                        <div className="p-1 space-y-0.5">
-                          <button onClick={() => setIsProfileOpen(false)} className="w-full flex items-center justify-between px-3 py-2 text-xs text-gray-700 hover:bg-purple-50 rounded-lg transition text-left">
-                            <span className="font-medium">My Listings</span>
-                            <span className="bg-gray-100 text-gray-600 font-semibold px-2 py-0.5 rounded-full text-[10px]">{userStats.listingsCount}</span>
-                          </button>
-                          <button onClick={() => setIsProfileOpen(false)} className="w-full flex items-center justify-between px-3 py-2 text-xs text-gray-700 hover:bg-purple-50 rounded-lg transition text-left">
-                            <span className="font-medium">Favorite Listings</span>
-                            <span className="bg-purple-50 text-purple-600 font-semibold px-2 py-0.5 rounded-full text-[10px]">{userStats.favoritesCount}</span>
-                          </button>
-                          <button onClick={() => setIsProfileOpen(false)} className="w-full flex items-center justify-between px-3 py-2 text-xs text-gray-700 hover:bg-purple-50 rounded-lg transition text-left">
-                            <span className="font-medium">My Reviews</span>
-                            <span className="bg-gray-100 text-gray-600 font-semibold px-2 py-0.5 rounded-full text-[10px]">{userStats.reviewsMadeCount}</span>
-                          </button>
-                        </div>
-                      </>
-                    )}
+                    </>
                   </div>
                 )}
               </div>
@@ -546,7 +355,7 @@ export default function PiMarketApp() {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
             <Input
-              placeholder="Search products near you..."
+              placeholder={t("search.holder")}
               className="pl-10 pr-4 py-2 bg-gray-100 border-0 rounded-full"
             />
           </div>
@@ -563,7 +372,7 @@ export default function PiMarketApp() {
                       type="text"
                       value={locationInput}
                       onChange={(e) => handleLocationInputChange(e.target.value)}
-                      placeholder="Type city name..."
+                      placeholder={t("location.holder")}
                       className="w-full px-2.5 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-black"
                     />
 
@@ -631,7 +440,7 @@ export default function PiMarketApp() {
                 <div className="flex items-center">
                   <MapPin className="h-4 w-4 mr-1 flex-shrink-0" />
                   <span className="font-medium text-gray-500">
-                    {location ? location : "Set your location"}
+                    {location ? location : t("location.none")}
                   </span>
                 </div>
                 <button className="text-sm text-purple-600 font-semibold hover:underline"
@@ -639,7 +448,7 @@ export default function PiMarketApp() {
                     setLocationInput(location);
                     setIsEditingLocation(true);
                   }}
-                > Edit
+                > {t("button.edit")}
                 </button>
               </div>
             )}
@@ -649,29 +458,9 @@ export default function PiMarketApp() {
 
       {/* Main Content */}
       <div className="pb-20">
-        {/* Pi Balance Card */}
-        <div className="px-4 py-4">
-          <Card className="bg-gradient-to-r from-purple-500 to-pink-500 text-white">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-purple-100 text-sm">Your Pi Balance</p>
-                  <p className="text-2xl font-bold">{123.123} π</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-purple-100 text-sm">≈ $623.75</p>
-                  <Button variant="secondary" size="sm" className="mt-1">
-                    Add Pi
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
         {/* Categories */}
         <div className="px-4 mb-6">
-          <h2 className="text-lg font-semibold mb-3">Categories</h2>
+          <h2 className="text-lg font-semibold mb-3">{t("category.heading")}</h2>
           <div className="grid grid-cols-3 gap-3">
             {categories.map((category, index) => (
               <Card key={index} className="cursor-pointer hover:shadow-md transition-shadow">
@@ -691,10 +480,9 @@ export default function PiMarketApp() {
         {/* Featured Products */}
         <div className="px-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-semibold">Featured Near You</h2>
-            <Button variant="ghost" size="sm">
-              See All
-            </Button>
+            <h2 className="text-lg font-semibold">{t("listing.heading")}</h2>
+            {/*<Button variant="ghost" size="sm" color="text-purple-600">{t("listing.view.all")}</Button>*/}
+            <button className="text-sm text-purple-600 font-semibold hover:underline">{t("listing.view.all")}</button>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -702,13 +490,21 @@ export default function PiMarketApp() {
               <Card key={product.id} className="cursor-pointer hover:shadow-md transition-shadow">
                 <CardContent className="p-0">
                   <div className="relative">
-                    <Image
-                      src={product.image || "/placeholder.svg"}
-                      alt={product.title}
-                      width={200}
-                      height={150}
-                      className="w-full h-32 object-cover rounded-t-lg"
-                    />
+                    {product.image ? (
+                      <Image
+                        src={product.image}
+                        alt={product.title}
+                        width={200}
+                        height={150}
+                        className="w-full h-32 object-cover rounded-t-lg"
+                      />
+                    ) : (
+                      /* Clean, responsive placeholder block that mimics an image layout */
+                      <div className="w-full h-32 bg-slate-100 flex flex-col items-center justify-center rounded-t-lg gap-1 border-b border-slate-100">
+                        <Package className="h-8 w-8 text-slate-400 stroke-[1.5]" />
+                        <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">No Image</span>
+                      </div>
+                    )}
                     {product.isNew && <Badge className="absolute top-2 left-2 bg-green-500">New</Badge>}
                     <Button
                       variant="ghost"
@@ -741,32 +537,18 @@ export default function PiMarketApp() {
         </div>
       </div>
 
-      {/* Bottom Navigation */}
+      {/* Add button */}
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200">
         <div className="grid grid-cols-5 py-2">
-          {[
-            { id: "home", icon: Home, label: "Home" },
-            { id: "categories", icon: Grid3X3, label: "Categories" },
-            { id: "sell", icon: Plus, label: "Sell" },
-            { id: "messages", icon: MessageCircle, label: "Messages" },
-            { id: "profile", icon: User, label: "Profile" },
-          ].map((tab) => (
-            <Button
-              key={tab.id}
-              variant="ghost"
-              className={`flex flex-col items-center py-2 px-1 h-auto ${activeTab === tab.id ? "text-purple-600" : "text-gray-400"
-                }`}
-              onClick={() => setActiveTab(tab.id)}
-            >
-              <tab.icon className="h-5 w-5 mb-1" />
-              <span className="text-xs">{tab.label}</span>
-              {tab.id === "sell" && (
-                <div className="absolute inset-0 bg-purple-600 rounded-full flex items-center justify-center -mt-2">
-                  <Plus className="h-6 w-6 text-white" />
-                </div>
-              )}
-            </Button>
-          ))}
+          <Button
+            key='add'
+            variant="ghost"
+            className="flex flex-col items-center py-2 px-1 h-auto text-purple-600600"
+            onClick={() => setIsNotificationOpen(false)}>
+            <div className="absolute inset-0 bg-purple-600 rounded-full flex items-center justify-center -mt-2">
+              <Plus className="h-8 w-8 bold text-white" />
+            </div>
+          </Button>
         </div>
       </div>
     </div>

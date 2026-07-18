@@ -1,9 +1,11 @@
 "use client";
 
 import { usePiAuth } from "@/contexts/pi-auth-context";
+import { useTranslation } from "@/hooks/use-translation";
 
 export function AuthLoadingScreen() {
   const { authMessage, reinitialize } = usePiAuth();
+  const { t } = useTranslation();
   const isError = authMessage.toLowerCase().includes("failed");
 
   return (
@@ -17,11 +19,10 @@ export function AuthLoadingScreen() {
         </div>
 
         <div className="space-y-2">
-          <h2 className="text-2xl font-semibold">Pi Network Authentication</h2>
+          <h2 className="text-2xl font-semibold">{t("auth.loading")}</h2>
           <p
-            className={`text-sm ${
-              isError ? "text-destructive" : "text-muted-foreground"
-            }`}
+            className={`text-sm ${isError ? "text-destructive" : "text-muted-foreground"
+              }`}
           >
             {authMessage}
           </p>
@@ -31,8 +32,7 @@ export function AuthLoadingScreen() {
           <button
             onClick={reinitialize}
             className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
-          >
-            Try Again
+          > {t("auth.retry")}
           </button>
         )}
       </div>

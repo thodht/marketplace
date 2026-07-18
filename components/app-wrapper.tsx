@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { PiAuthProvider, usePiAuth } from "@/contexts/pi-auth-context";
+import { PreferencesProvider } from "@/contexts/preferences-context";
 import { AuthLoadingScreen } from "./auth-loading-screen";
 
 function AppContent({ children }: { children: ReactNode }) {
@@ -13,7 +14,9 @@ function AppContent({ children }: { children: ReactNode }) {
 export function AppWrapper({ children }: { children: ReactNode }) {
   return (
     <PiAuthProvider>
-      <AppContent>{children}</AppContent>
+      <PreferencesProvider>
+        <AppContent>{children}</AppContent>
+      </PreferencesProvider>
     </PiAuthProvider>
   );
 }
