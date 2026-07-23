@@ -14,4 +14,9 @@ export class DatabaseService<T> {
         const docRef = doc(db, this.collectionName, id);
         await setDoc(docRef, data, { merge: true });
     }
+
+    async saveDefaultId(data: Partial<T>): Promise<void> {
+        const docRef = doc(db, this.collectionName);
+        await setDoc(docRef, data, { merge: true });
+    }
 }

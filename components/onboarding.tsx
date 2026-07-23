@@ -1,19 +1,18 @@
 import React, { useState, useEffect } from "react";
 import { Globe, ArrowRight } from "lucide-react";
-import { buildPiSdk } from '@/lib/piSdk';
-//import { usePreferences } from '@/contexts/preferences-context';
 import { Lang, LANG_NAMES } from "@/types/languages";
 import { useTranslation } from "@/hooks/use-translation";
 import { usePiAuth } from "@/contexts/pi-auth-context";
-import { usePreferences } from "@/contexts/preferences-context";
+import { useOnboarding } from "@/contexts/onboarding-context";
+import { COLLECTIONS } from "@/types";
 
 interface OnboardingProps {
     onComplete: () => void;
 }
 
 export default function Onboarding({ onComplete }: OnboardingProps) {
-    const authContext = usePiAuth();
-    const prefContext = usePreferences();
+    const { piUser } = usePiAuth();
+    const { saveUserPreferences, completeOnboarding } = useOnboarding();
     const { t, currentLang, changeLanguage } = useTranslation();
     const [selectedLang, setSelectedLang] = useState<Lang>(currentLang);
     const [displayName, setDisplayName] = useState("");
@@ -55,14 +54,14 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
         setErrorMsg('');
         try {
             // 1. Call our backend route to check/create user and save their name
-            const response = await fetch('/api/user/onboard', {
-                method: 'PUT',
+            const response = await fetch(`/${COLLECTIONS.user}`, {
+                method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-User-Id': authContext.user.uid
+                    'X-User-Id': piUser.uid
                 },
                 body: JSON.stringify({
-                    username: authContext.user?.username,
+                    username: piUser?.username,
                     displayName: displayName,
                     rating: 0,
                     reviewCount: 0,
@@ -72,28 +71,24 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
             });
 
             if (!response.ok) {
-                throw new Error(t("onboarding.error"));
+                throw new Error("Cannot save user");
             }
 
             // 2. Construct the initial preferences
             const initialPreferences = {
                 lang: selectedLang,
                 displayName: displayName,
-                location: null,
-                lat: 0,
-                lng: 0,
+                location: { loc: null, lat: 0, lng: 0 }
             };
-            const sdk = buildPiSdk();
-            // Save to the authenticated backend storage
-            await sdk.userState.set(authContext.user.uid, initialPreferences as unknown as Record<string, unknown>);
+            await saveUserPreferences(initialPreferences);
         } catch (err: any) {
             console.error('Onboarding Error:', err);
             setErrorMsg(t("onboarding.unknown.error"));
             setShowConfirm(false);
         } finally {
             setIsSubmitting(false);
-            prefContext.completeOnboarding();
         }
+        completeOnboarding();
     };
 
     return (
@@ -148,7 +143,7 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
                         value={displayName}
                         onChange={(e) => setDisplayName(e.target.value)}
                         placeholder={t("onboarding.name.holder")}
-                        maxLength={40}
+                        maxLength={18}
                         className="w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-800 placeholder-gray-400 text-sm"
                     />
                     <p className="text-xs text-amber-600 mt-2 font-medium">⚠️ {t("onboarding.name.info")}</p>

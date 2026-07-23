@@ -1,4 +1,4 @@
-// /hooks/useTranslation.ts
+//"use client";
 import { useState, useEffect } from "react";
 import { Lang, dictionaries, AppDictionary } from "@/types/languages";
 

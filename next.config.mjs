@@ -7,7 +7,7 @@ const NextConfig = {
   images: {
     unoptimized: true,
   },
-  allowedDevOrigins: ['http://10.0.0.93:3000', 'https://thodht.a.pinggy.link'],
+  allowedDevOrigins: ['https://thodht.a.pinggy.link'],
   reactStrictMode: true,
 
   // ✅ Move infrastructureLogging here to the top level

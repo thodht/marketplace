@@ -8,7 +8,7 @@ import React, {
   type ReactNode,
 } from "react";
 import { PI_NETWORK_CONFIG } from "@/lib/system-config";
-import { buildPiSdk } from "@/lib/piSdk";
+import { buildPiSdk, PiSdk } from "@/lib/piSdk";
 import type { PiUser } from "@swetate/auth";
 
 const COMMUNICATION_REQUEST_TYPE = '@pi:app:sdk:communication_information_request';
@@ -17,7 +17,8 @@ export interface PiAuthContextType {
   isAuthenticated: boolean;
   authMessage: string;
   hasError: boolean;
-  user: PiUser;
+  sdk: PiSdk | null;
+  piUser: PiUser;
   reinitialize: () => Promise<void>;
 }
 
@@ -157,7 +158,8 @@ export function PiAuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authMessage, setAuthMessage] = useState("Initializing Pi Network...");
   const [hasError, setHasError] = useState(false);
-  const [user, setUser] = useState<PiUser | null>(null);
+  const [sdk, setSdk] = useState<PiSdk | null>(null);
+  const [piUser, setPiUser] = useState<PiUser>({ uid: "", username: "" });
 
   const initialize = async () => {
     setHasError(false);
@@ -179,17 +181,13 @@ export function PiAuthProvider({ children }: { children: ReactNode }) {
         sandbox: PI_NETWORK_CONFIG.SANDBOX,
       });
 
-      // Auth + user-state are served by the @pi-sdk npm packages; SDKLite still backs
-      // payments, ads, products and restore until those packages ship. The adapter keeps
-      // the SDKLiteInstance surface so nothing downstream changes.
       setAuthMessage("Logging in...");
       const pi = buildPiSdk();
+      setSdk(pi);
       const user = await pi.auth.login();
-      if (user) {
-        setUser(user);
-        setIsAuthenticated(true);
-        setAuthMessage("Authenticated!")
-      }
+      setPiUser(user);
+      setIsAuthenticated(true);
+      setAuthMessage("Authenticated!")
 
     } catch (err) {
       setHasError(true);
@@ -209,7 +207,8 @@ export function PiAuthProvider({ children }: { children: ReactNode }) {
     isAuthenticated,
     authMessage,
     hasError,
-    user,
+    sdk,
+    piUser,
     reinitialize: initialize,
   };
 

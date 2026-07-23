@@ -8,19 +8,22 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import Image from "next/image";
-import { usePiAuth } from "@/contexts/pi-auth-context";
-import { usePreferences } from '@/contexts/preferences-context';
-import Onboarding from "@/components/onboarding";
 import { useTranslation } from "@/hooks/use-translation";
-import type { PiUser } from "@swetate/auth";
+import { usePiAuth } from "@/contexts/pi-auth-context";
+import { useOnboarding } from '@/contexts/onboarding-context';
+import { useMain } from "@/contexts/main-context";
+import Onboarding from "@/components/onboarding";
+import { Location } from "@/types/index";
+import { NewListingModal } from "@/components/new-listing";
 
 
 export default function PiMarketApp() {
-  const authContext = usePiAuth();
-  const prefContext = usePreferences();
   const { t, currentLang, changeLanguage } = useTranslation();
+  const { piUser } = usePiAuth();
+  const { preferences, isLoading, needsOnboarding, completeOnboarding } = useOnboarding();
+  const { isReady, appUser } = useMain();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
-  const [piUser, setPiUser] = useState<PiUser | null>(null);
+  const [isNewListingOpen, setIsNewListingOpen] = useState(false);
 
   // State to toggle the notification listing dropdown/modal
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
@@ -44,8 +47,8 @@ export default function PiMarketApp() {
     reviewsMadeCount: 8
   });
 
-  // State for location
-  const [location, setLocation] = useState<string>(t("location.none"));
+  // States for location
+  const [location, setLocation] = useState<Location | null>(preferences?.location ?? null);
   const [isEditingLocation, setIsEditingLocation] = useState<boolean>(false);
   const [locationInput, setLocationInput] = useState<string>("");
   // Location suggestion state
@@ -55,15 +58,13 @@ export default function PiMarketApp() {
   useEffect(() => {
     // Simulating Pi Network Auth Check
     const checkAuth = async () => {
-      if (authContext && authContext.user) {
-        setPiUser(authContext.user);
+      if (piUser) {
+        setIsAuthenticated(true);
       }
-      setIsAuthenticated(true);
     };
-    // Checking Persistent Storage configuration flags
 
     checkAuth();
-  }, [authContext?.user]);
+  }, []);
 
   // NOTIFICATION
   // Derived state: automatically checks if there is any notification where seen is false
@@ -94,13 +95,13 @@ export default function PiMarketApp() {
           // Extract a readable city/country name
           const cityName = data.address.city || data.address.town || data.address.village || "Unknown Location";
           const countryName = data.address.country || "";
-          const formattedLocation = `${cityName}, ${countryName}`;
+          const location: Location = { loc: `${cityName}, ${countryName}`, lat: latitude, lng: longitude };
 
-          setLocation(formattedLocation);
-          setLocationInput(formattedLocation);
+          setLocation(location);
+          setLocationInput(location.loc || "");
         } catch (err) {
           // Fallback to coordinates if the geocoding service fails
-          setLocation(`Lat: ${latitude.toFixed(2)}, Lon: ${longitude.toFixed(2)}`);
+          setLocation({ 'loc': "", 'lat': latitude, 'lng': longitude });
         }
       },
       () => {
@@ -179,8 +180,19 @@ export default function PiMarketApp() {
       isNew: false,
     },
   ]
+
+  const handleRefreshFeed = () => {
+    // Trigger a data reload routine for your listing feed component here
+    console.log("Listing successfully posted! Refreshing marketplace rows...");
+  };
+
+  // Handle Unauthenticated State
+  if (!isAuthenticated) {
+    return <div>{t("auth.login")}</div>;
+  }
+
   // Show loading spinner while hooks process persistent storage records
-  if (prefContext.isLoading) {
+  if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600" />
@@ -188,17 +200,20 @@ export default function PiMarketApp() {
     );
   }
 
-  // Handle Unauthenticated State
-  if (!isAuthenticated) {
-    return <div>{t("auth.login")}</div>;
-  }
-
   // Force onboarding for new profile
-  if (prefContext.needsOnboarding === true) {
+  if (needsOnboarding) {
     return (
       <Onboarding
-        onComplete={() => prefContext.completeOnboarding()}
+        onComplete={() => completeOnboarding()}
       />
+    );
+  }
+
+  if (!isReady) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-white">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600" />
+      </div>
     );
   }
 
@@ -320,7 +335,8 @@ export default function PiMarketApp() {
                     <>
                       <div className="px-4 py-2.5 border-b border-gray-50 flex justify-between items-center bg-gray-50/50 rounded-t-xl">
                         <span className="text-xs font-bold text-gray-800 truncate pr-2">
-                          Hi, @{piUser?.username ?? "Pioneer"}
+                          {/*Hi, {prefContext.preferences?.displayName}*/}
+                          Hi, {appUser?.displayName || "Pioneer"}
                         </span>
                         <div className="flex items-center text-[11px] font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded flex-shrink-0">
                           <span className="ml-0.5">{userStats.rating}</span>
@@ -409,7 +425,7 @@ export default function PiMarketApp() {
 
                   <button
                     onClick={() => {
-                      setLocation(locationInput || "");
+                      setLocation(location);
                       setIsEditingLocation(false);
                       setSuggestions([]);
                     }}
@@ -440,12 +456,12 @@ export default function PiMarketApp() {
                 <div className="flex items-center">
                   <MapPin className="h-4 w-4 mr-1 flex-shrink-0" />
                   <span className="font-medium text-gray-500">
-                    {location ? location : t("location.none")}
+                    {location ? location.loc : t("location.none")}
                   </span>
                 </div>
                 <button className="text-sm text-purple-600 font-semibold hover:underline"
                   onClick={() => {
-                    setLocationInput(location);
+                    setLocationInput(location?.loc || "");
                     setIsEditingLocation(true);
                   }}
                 > {t("button.edit")}
@@ -544,13 +560,22 @@ export default function PiMarketApp() {
             key='add'
             variant="ghost"
             className="flex flex-col items-center py-2 px-1 h-auto text-purple-600600"
-            onClick={() => setIsNotificationOpen(false)}>
+            onClick={() => setIsNewListingOpen(true)}
+          >
             <div className="absolute inset-0 bg-purple-600 rounded-full flex items-center justify-center -mt-2">
               <Plus className="h-8 w-8 bold text-white" />
             </div>
           </Button>
         </div>
       </div>
+
+      {/* Overlay Component Registration */}
+      <NewListingModal
+        isOpen={isNewListingOpen}
+        onClose={() => setIsNewListingOpen(false)}
+        onSuccess={handleRefreshFeed}
+      />
+
     </div>
   )
 }

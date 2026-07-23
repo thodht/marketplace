@@ -11,12 +11,12 @@ export type ListingStatus = 'open' | 'pending' | 'sold';
 export type OfferStatus = 'offered' | 'declined' | 'accepted';
 
 export const CATEGORIES: Category[] = [
-    { id: 'electronics', name: 'Electronics', icon: 'laptop', bgcolor: 'bg-blue-100' },
-    { id: 'fashion', name: 'Fashion', icon: 'shirt', bgcolor: 'bg-pink-100' },
-    { id: 'vehicles', name: 'Vehicles', icon: 'car', bgcolor: 'bg-red-100' },
-    { id: 'food', name: 'Food', icon: 'utensils', bgcolor: 'bg-yellow-100' },
-    { id: 'services', name: 'Services', icon: 'handshake', bgcolor: 'bg-green-100' },
-    { id: 'others', name: 'Others', icon: 'circle-ellipsis', bgcolor: 'bg-purple-100' },
+    { id: 'electronics', icon: 'laptop', bgcolor: 'bg-blue-100' },
+    { id: 'fashion', icon: 'shirt', bgcolor: 'bg-pink-100' },
+    { id: 'vehicles', icon: 'car', bgcolor: 'bg-red-100' },
+    { id: 'food', icon: 'utensils', bgcolor: 'bg-yellow-100' },
+    { id: 'services', icon: 'handshake', bgcolor: 'bg-green-100' },
+    { id: 'others', icon: 'circle-ellipsis', bgcolor: 'bg-purple-100' },
 ];
 
 export const PROMOTION_PLANS: PromotionPlan[] = [
@@ -49,13 +49,12 @@ export const PROMOTION_PLANS: PromotionPlan[] = [
 // 1. PRODUCT CATEGORIES
 export interface Category {
     id: string;
-    name: string;
     icon: string;    // e.g., Lucide icon name or image path
     bgcolor: string; // e.g., Tailwind class 'bg-blue-100' or hex '#f0f0f0'
 }
 
 // 2. USERS
-export interface User {
+export interface AppUser {
     id: string;              // Pi User UID
     username: string;        // Unique Pi username (e.g., "alex99")
     displayName?: string;   // Friendly name (e.g., "Alex Smith") - Optional fallback
@@ -79,6 +78,7 @@ export interface Listing {
     categoryId: string;
     title: string;
     description: string;
+    listingCount: number;
     status: ListingStatus;    // 'open', 'pending', or 'sold'
     displayed: boolean;       // Control feed visibility (Seller deletes set this to false)
     images: string[];
@@ -86,25 +86,23 @@ export interface Listing {
 
     // Seller Context (Denormalized names for instant display)
     sellerId: string;
-    sellerUsername: string;
     sellerDisplayName: string | null;
     sellerRating: number;
 
     // Buyer & Lockout Context
     buyerId: string | null;
-    buyerUsername: string | null;
     buyerDisplayName: string | null;
     pendingUser: string | null; // Exclusive Checkout Lock (Blocks other buyers when status is 'pending')
 
     // Pricing
     origPrice: number;
-    adjustedPrice: number;
-    finalizedPrice: number;
+    adjustedPrice: number | null;
+    finalizedPrice: number | null;
 
     // Promotion
     isPromoted: boolean;
-    promotedPlanId?: string; // References 'basic_boost', 'premium_boost', etc.
-    promotedUntil?: number;  // millisecond timestamp
+    promotedPlanId: string | null; // References 'basic_boost', 'premium_boost', etc.
+    promotedUntil: number | null;  // millisecond timestamp
 
     createdAt: number;
 }
@@ -205,23 +203,22 @@ export interface Notification {
 }
 
 // 11. PREFERENCES
-export interface UserPreferences {
-    lang: Lang;
-    displayName: string | null;
-    location: string | null;
+
+export interface Location {
+    loc: string | null;
     lat: number;
     lng: number;
 }
-
-// ---- storage keys ----
-export const KEYS = {
-    user_prefs: "user_prefs",
-} as const;
+export interface UserPreferences {
+    lang: Lang;
+    displayName: string | null;
+    location: Location | null;
+}
 
 export const COLLECTIONS = {
-    userPrefs: "UserPreferences",
-    users: "Users",
-    listings: "Listings"
+    userState: "user-state",
+    user: "user",
+    listing: "listing"
 }
 /*export const CAPS = {
     listings: 40,

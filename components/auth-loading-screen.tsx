@@ -24,7 +24,6 @@ export function AuthLoadingScreen() {
             className={`text-sm ${isError ? "text-destructive" : "text-muted-foreground"
               }`}
           >
-            {authMessage}
           </p>
         </div>
 

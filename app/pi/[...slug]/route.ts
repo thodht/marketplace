@@ -8,32 +8,18 @@ import { UserPreferences, COLLECTIONS } from "@/types/index"; // Type-safe impor
 const PI_API_URL = process.env.PI_API_URL;
 const JWT_SECRET = process.env.JWT_SECRET;
 
-export async function GET(
-    request: NextRequest,
-    { params }: { params: Promise<{ slug: string[] }> }
-) {
-    if (!JWT_SECRET) {
-        return NextResponse.json({ error: 'Server misconfiguration' }, { status: 500 });
-    }
-
+export async function GET(request: NextRequest, { params }: { params: Promise<{ slug: string[] }> }) {
     const { slug } = await params;
-    const [pluginName, apiVersion, key] = slug; // key will be 'user_prefs'
+    const [pluginName, apiVersion, key] = slug;
 
-    if (pluginName === 'user-state') {
+    if (pluginName === COLLECTIONS.userState) {
         try {
-            // 1. Authenticate the user calling sdk.userState.get()
-            const userId = request.headers.get("x-User-Id");
-            if (!userId) {
-                return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-            }
-
-            const userPrefsDb = new DatabaseService<UserPreferences>(COLLECTIONS.userPrefs);
+            const userPrefsDb = new DatabaseService<UserPreferences>(COLLECTIONS.userState);
             const userPrefsData = await userPrefsDb.getById(key);
-
-            return NextResponse.json(userPrefsData);
+            return NextResponse.json({ blob: userPrefsData });
         } catch (err: any) {
-            console.error("Failed to retrieve user state:", err);
-            return NextResponse.json({ error: 'Database fetch failed' }, { status: 500 });
+            console.error("Failed to retrieve user preferences:", err);
+            return NextResponse.json({ error: 'User preferences fetch failed' }, { status: 500 });
         }
     }
 
@@ -51,12 +37,12 @@ export async function PUT(
     const { slug } = await params;
     const [pluginName, apiVersion, key] = slug; // key will be 'user_prefs'
 
-    if (pluginName === 'user-state') {
+    if (pluginName === COLLECTIONS.userState) {
         try {
             const body = await request.json();
 
             // 2. Perform clean, specific database update
-            const userPrefsDb = new DatabaseService<UserPreferences>(COLLECTIONS.userPrefs);
+            const userPrefsDb = new DatabaseService<UserPreferences>(COLLECTIONS.userState);
             await userPrefsDb.save(key, body);
 
             return NextResponse.json({ status: 200, data: body });
