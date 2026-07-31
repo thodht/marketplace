@@ -35,7 +35,7 @@ export const MainProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 });
                 if (!response.ok) return;
                 const data = await response.json();
-                setAppUser(data as unknown as AppUser);
+                setAppUser(data.blob as unknown as AppUser);
             } catch (err: any) {
                 console.error('Error loading user:', err);
             } finally {
@@ -44,7 +44,7 @@ export const MainProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
 
         loadUser();
-    }, [sdk, isAuthenticated, piUser]);
+    }, [sdk, isAuthenticated, piUser, finishedOnboarding]);
 
     const value: MainContextType = {
         isReady,
